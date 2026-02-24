@@ -1,8 +1,9 @@
 import json
 import random
 import re
+import edge_tts
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 app = FastAPI()
 
@@ -86,6 +87,27 @@ def api_random():
     if not words_keys: return {"word": "Error", "data": {"消息": "词库加载异常"}}
     w = random.choice(words_keys)
     return {"word": w, "data": words_data[w]}
+
+
+@app.get("/api/audio/{word}")
+async def api_audio(word: str):
+    """后端 TTS 发音，微信等不支持 Web Speech API 的浏览器可用此接口播放"""
+    w = "".join(c for c in word.strip() if c.isalpha() or c.isspace())[:50].strip()
+    if not w:
+        return Response(status_code=400)
+    try:
+        communicate = edge_tts.Communicate(w, "en-US-GuyNeural")
+        chunks = []
+        async for chunk in communicate.stream():
+            if chunk.get("type") == "audio":
+                chunks.append(chunk.get("data", b""))
+        body = b"".join(chunks)
+        if not body:
+            return Response(status_code=500)
+        return Response(content=body, media_type="audio/mpeg")
+    except Exception as e:
+        return Response(status_code=500, content=str(e))
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -177,8 +199,9 @@ HTML_CONTENT = """
                 <div class="bg-gradient-to-r from-indigo-600 to-blue-500 px-8 py-8 sm:py-10 text-white relative">
                     <h2 class="text-5xl font-black tracking-wide capitalize relative z-10">{{ currentWord.word }}</h2>
                     <div class="absolute top-6 right-6 flex flex-col items-end space-y-2 z-10">
-                        <button @click="speakWord(currentWord.word)" type="button" class="flex-shrink-0 w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-white/50" title="发音">
-                            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                        <button @click="speakWord(currentWord.word)" type="button" class="flex-shrink-0 px-3 py-2 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center gap-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 text-white text-sm font-bold" title="TTS发音">
+                            <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+                            <span>TTS发音</span>
                         </button>
                         <span class="bg-white/20 backdrop-blur px-3 py-1 rounded-full text-xs font-bold shadow-sm border border-white/30">
                              🎯 抽中: {{ stats[currentWord.word]?.count || 0 }} 次
@@ -426,12 +449,11 @@ HTML_CONTENT = """
 
                 const speakWord = (word) => {
                     if (!word || typeof word !== 'string') return;
-                    if (!('speechSynthesis' in window)) return;
-                    window.speechSynthesis.cancel();
-                    const u = new SpeechSynthesisUtterance(word.trim());
-                    u.lang = 'en-US';
-                    u.rate = 0.9;
-                    window.speechSynthesis.speak(u);
+                    const w = word.trim();
+                    if (!w) return;
+                    const url = '/api/audio/' + encodeURIComponent(w);
+                    const audio = new Audio(url);
+                    audio.play().catch(() => {});
                 };
 
                 return { 
