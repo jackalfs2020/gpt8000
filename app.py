@@ -177,6 +177,9 @@ HTML_CONTENT = """
                 <div class="bg-gradient-to-r from-indigo-600 to-blue-500 px-8 py-8 sm:py-10 text-white relative">
                     <h2 class="text-5xl font-black tracking-wide capitalize relative z-10">{{ currentWord.word }}</h2>
                     <div class="absolute top-6 right-6 flex flex-col items-end space-y-2 z-10">
+                        <button @click="speakWord(currentWord.word)" type="button" class="flex-shrink-0 w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-white/50" title="发音">
+                            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                        </button>
                         <span class="bg-white/20 backdrop-blur px-3 py-1 rounded-full text-xs font-bold shadow-sm border border-white/30">
                              🎯 抽中: {{ stats[currentWord.word]?.count || 0 }} 次
                         </span>
@@ -420,10 +423,20 @@ HTML_CONTENT = """
                     return "🔹 " + key.toUpperCase();
                 };
 
+                const speakWord = (word) => {
+                    if (!word || typeof word !== 'string') return;
+                    if (!('speechSynthesis' in window)) return;
+                    window.speechSynthesis.cancel();
+                    const u = new SpeechSynthesisUtterance(word.trim());
+                    u.lang = 'en-US';
+                    u.rate = 0.9;
+                    window.speechSynthesis.speak(u);
+                };
+
                 return { 
                     searchQuery, searchResults, currentWord, isLoading, stats, masteredCount,
                     examState, examInput, examError, examInputRef, examTitle,
-                    handleSearch, selectWord, fetchRandom, submitExam, giveUp, renderMarkdown, formatKey 
+                    handleSearch, selectWord, fetchRandom, submitExam, giveUp, renderMarkdown, formatKey, speakWord 
                 };
             }
         }).mount('#app');
