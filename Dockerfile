@@ -7,4 +7,4 @@ RUN curl -L -o gptwords.json https://raw.githubusercontent.com/Ceelog/Dictionary
     curl -L -o gptwords.json https://cdn.jsdelivr.net/gh/Ceelog/DictionaryByGPT4@main/gptwords.json
 COPY app.py .
 EXPOSE 8000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}
