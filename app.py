@@ -414,6 +414,7 @@ HTML_CONTENT = """
 
                 const formatKey = (key) => {
                     const map = {
+                        content: "word is world",
                         meaning: "💡 词义与考点", etymology: "🏛️ 词源探秘", root: "🧩 词根词缀", roots: "🧩 词根词缀",
                         variations: "🔄 单词变形", background: "🌍 文化背景", memory: "🧠 记忆技巧", trick: "🧠 记忆窍门",
                         story: "📖 场景小故事", sentences: "📝 实用例句", example: "📝 实用例句", examples: "📝 实用例句",
