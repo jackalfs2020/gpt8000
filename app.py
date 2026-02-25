@@ -4,7 +4,7 @@ import random
 from datetime import datetime, timezone
 import re
 import edge_tts
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
@@ -15,6 +15,7 @@ LEADERBOARD_FILE = os.environ.get("LEADERBOARD_FILE", "leaderboard.json")
 
 class LeaderboardIn(BaseModel):
     count: int = 0
+    device_id: str | None = None  # 设备唯一标识，仅后台记录，不返回前端
 
 words_data = {}
 words_keys = []
@@ -98,8 +99,8 @@ def api_random():
     return {"word": w, "data": words_data[w]}
 
 
-# 排行榜：仅存已接触数量，不记录人或设备，持久化到文件
-# 存储格式: [{count, ts}, ...]  ts 为 Unix 毫秒
+# 排行榜：持久化到文件，后台记录 device_id + ip + user_agent 辅助（不返回前端）
+# 存储格式: [{count, ts, device_id?, ip?, user_agent?}, ...]
 def _load_leaderboard() -> list[dict]:
     try:
         with open(LEADERBOARD_FILE, "r", encoding="utf-8") as f:
@@ -109,9 +110,14 @@ def _load_leaderboard() -> list[dict]:
             out = []
             for x in data:
                 if isinstance(x, dict) and "count" in x:
-                    out.append(x)
+                    out.append({
+                        **x,
+                        "device_id": x.get("device_id") or "",
+                        "ip": x.get("ip") or "",
+                        "user_agent": x.get("user_agent") or "",
+                    })
                 elif isinstance(x, (int, float)):
-                    out.append({"count": int(x), "ts": 0})
+                    out.append({"count": int(x), "ts": 0, "device_id": "", "ip": "", "user_agent": ""})
             return out
     except (FileNotFoundError, json.JSONDecodeError):
         return []
@@ -153,10 +159,19 @@ def api_leaderboard():
 
 
 @app.post("/api/leaderboard")
-def api_leaderboard_submit(body: LeaderboardIn):
-    """仅提交已接触数量，不记录任何身份信息"""
+def api_leaderboard_submit(body: LeaderboardIn, request: Request):
+    """提交已接触数量，后台记录 device_id + ip + user_agent 辅助，不返回前端"""
     if 0 <= body.count <= 100000:
-        _leaderboard.append({"count": body.count, "ts": int(datetime.now(timezone.utc).timestamp() * 1000)})
+        did = (body.device_id or "").strip()[:64] if body.device_id else ""
+        ip = request.headers.get("x-forwarded-for", request.client.host or "").split(",")[0].strip()[:45] if request.client else ""
+        ua = (request.headers.get("user-agent") or "")[:200]
+        _leaderboard.append({
+            "count": body.count,
+            "ts": int(datetime.now(timezone.utc).timestamp() * 1000),
+            "device_id": did,
+            "ip": ip,
+            "user_agent": ua,
+        })
         _leaderboard.sort(key=lambda x: x["count"], reverse=True)
         del _leaderboard[100:]
         _save_leaderboard(_leaderboard)
@@ -430,10 +445,15 @@ HTML_CONTENT = """
                         leaderboard.value = await lbRes.json();
                         const count = Object.keys(stats.value).length;
                         if (count > 0) {
+                            let deviceId = localStorage.getItem('gpt_dict_device_id');
+                            if (!deviceId) {
+                                deviceId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'd-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+                                localStorage.setItem('gpt_dict_device_id', deviceId);
+                            }
                             const sub = await fetch('/api/leaderboard', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ count })
+                                body: JSON.stringify({ count, device_id: deviceId })
                             });
                             const data = await sub.json();
                             if (data.total) leaderboard.value = { total: data.total || [], monthly: data.monthly || [], daily: data.daily || [] };
