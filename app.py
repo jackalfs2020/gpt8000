@@ -138,9 +138,9 @@ def _build_leaderboard_response(lst: list[dict]) -> dict:
         reverse=True
     )
     return {
-        "total": counts_all[:2],
-        "monthly": counts_month[:1],
-        "daily": counts_day[:2],
+        "total": counts_all[:2],   # 第1、2名
+        "monthly": counts_month[:1],  # 月度第1名
+        "daily": counts_day[:2],   # 单日第1、2名
     }
 
 
