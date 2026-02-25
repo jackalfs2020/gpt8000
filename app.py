@@ -199,10 +199,6 @@ HTML_CONTENT = """
                 <div class="bg-gradient-to-r from-indigo-600 to-blue-500 px-8 py-8 sm:py-10 text-white relative">
                     <h2 class="text-5xl font-black tracking-wide capitalize relative z-10">{{ currentWord.word }}</h2>
                     <div class="absolute top-6 right-6 flex flex-col items-end space-y-2 z-10">
-                        <button @click="speakWord(currentWord.word)" type="button" class="flex-shrink-0 px-3 py-2 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center gap-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 text-white text-sm font-bold" title="TTS发音">
-                            <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-                            <span>TTS发音</span>
-                        </button>
                         <span class="bg-white/20 backdrop-blur px-3 py-1 rounded-full text-xs font-bold shadow-sm border border-white/30">
                              🎯 抽中: {{ stats[currentWord.word]?.count || 0 }} 次
                         </span>
@@ -214,9 +210,12 @@ HTML_CONTENT = """
                 <div class="p-8 space-y-6">
                     <div v-for="(value, key) in currentWord.data" :key="key">
                         <template v-if="!['word', 'headword'].includes(key.toLowerCase()) && value">
-                            <h3 class="text-sm text-indigo-500 font-extrabold uppercase tracking-widest mb-3 flex items-center">
-                                {{ formatKey(key) }}
-                            </h3>
+                            <div class="flex items-center justify-between gap-3 mb-3">
+                                <h3 class="text-sm text-indigo-500 font-extrabold uppercase tracking-widest flex items-center">
+                                    {{ formatKey(key) }}
+                                </h3>
+                                <button v-if="key.toLowerCase() === 'content'" @click="speakWord(currentWord.word)" type="button" class="flex-shrink-0 px-3 py-1.5 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-xs font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-300" title="语迟福到">语迟福到</button>
+                            </div>
                             <div v-if="typeof value === 'object'" class="space-y-3 bg-indigo-50/30 p-5 rounded-2xl markdown-body">
                                 <p v-for="(v, k) in value" :key="k" class="text-gray-700">
                                     <span v-if="isNaN(k)" class="font-bold text-gray-900 mr-1">{{ k }}: </span>
@@ -244,7 +243,7 @@ HTML_CONTENT = """
     </div>
 
     <script>
-        const { createApp, ref, computed, onMounted, nextTick } = Vue;
+        const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
         createApp({
             setup() {
                 const searchQuery = ref('');
@@ -281,6 +280,11 @@ HTML_CONTENT = """
                     if (examState.value.type === 'draw6') return '🔥 终极考核：答对将入驻熟词本封印 30 天';
                     if (examState.value.type === 'review') return '⏰ 记忆唤醒：31 天期满复测';
                     return '随堂测验';
+                });
+
+                // 单词展示时自动发音一遍
+                watch(currentWord, (val) => {
+                    if (val?.word && !examState.value.isExam) nextTick(() => speakWord(val.word));
                 });
 
                 // 初始化时拉取全部 key
