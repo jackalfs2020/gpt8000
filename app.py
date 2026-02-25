@@ -1,11 +1,19 @@
 import json
+import os
 import random
 import re
 import edge_tts
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
+from pydantic import BaseModel
 
 app = FastAPI()
+
+LEADERBOARD_FILE = os.environ.get("LEADERBOARD_FILE", "leaderboard.json")
+
+
+class LeaderboardIn(BaseModel):
+    count: int = 0
 
 words_data = {}
 words_keys = []
@@ -89,6 +97,43 @@ def api_random():
     return {"word": w, "data": words_data[w]}
 
 
+# 排行榜：仅存已接触数量，不记录人或设备，持久化到文件
+def _load_leaderboard() -> list[int]:
+    try:
+        with open(LEADERBOARD_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_leaderboard(lst: list[int]) -> None:
+    try:
+        with open(LEADERBOARD_FILE, "w", encoding="utf-8") as f:
+            json.dump(lst, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ 排行榜保存失败: {e}")
+
+
+_leaderboard = _load_leaderboard()
+
+
+@app.get("/api/leaderboard")
+def api_leaderboard():
+    return sorted(_leaderboard, reverse=True)[:5]
+
+
+@app.post("/api/leaderboard")
+def api_leaderboard_submit(body: LeaderboardIn):
+    """仅提交已接触数量，不记录任何身份信息"""
+    if 0 <= body.count <= 100000:
+        _leaderboard.append(body.count)
+        _leaderboard.sort(reverse=True)
+        del _leaderboard[100:]
+        _save_leaderboard(_leaderboard)
+    return {"ok": True, "top5": sorted(_leaderboard, reverse=True)[:5]}
+
+
 @app.get("/api/audio/{word}")
 async def api_audio(word: str):
     """后端 TTS 发音，微信等不支持 Web Speech API 的浏览器可用此接口播放"""
@@ -141,11 +186,40 @@ HTML_CONTENT = """
         <header class="text-center mb-8 mt-4 relative">
             <h1 class="text-4xl font-black text-indigo-600 mb-2 tracking-tight">GPT4 智能单词本</h1>
             <p class="text-gray-500 font-medium">内置 30 天熟词休眠与动态考核引擎</p>
-            <div class="mt-4 flex justify-center gap-3 text-sm font-bold opacity-80">
-                <span class="bg-gray-200 px-3 py-1 rounded-full text-gray-600">🧠 已接触: {{ Object.keys(stats).length }} 词</span>
-                <span class="bg-green-100 px-3 py-1 rounded-full text-green-700">🏆 熟词本: {{ masteredCount }} 词</span>
+            <div class="mt-4 flex justify-center gap-3 text-sm font-bold flex-wrap">
+                <button @click="openModal('encountered')" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-full text-gray-600 cursor-pointer transition-colors">
+                    🧠 已接触: {{ encounteredWords.length }} 词
+                </button>
+                <button @click="openModal('mastered')" class="bg-green-100 hover:bg-green-200 px-3 py-1 rounded-full text-green-700 cursor-pointer transition-colors">
+                    🏆 熟词本: {{ masteredCount }} 词
+                </button>
+            </div>
+            <div class="mt-4 bg-white rounded-xl shadow border border-gray-100 p-4 max-w-xs mx-auto">
+                <h3 class="text-xs font-black text-gray-500 uppercase tracking-wider mb-2 text-center">📊 排行榜（已接触数）</h3>
+                <ul class="space-y-1 text-sm">
+                    <li v-for="(n, i) in leaderboard" :key="i" class="flex justify-between py-1 border-b border-gray-50 last:border-0">
+                        <span class="text-gray-400">#{{ i + 1 }}</span>
+                        <span class="font-bold text-indigo-600">{{ n }} 词</span>
+                    </li>
+                    <li v-if="leaderboard.length === 0" class="text-gray-400 text-center py-2">暂无记录</li>
+                </ul>
             </div>
         </header>
+
+        <div v-if="modalType" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click.self="modalType = null">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[70vh] overflow-hidden flex flex-col">
+                <div class="px-6 py-4 border-b flex justify-between items-center">
+                    <span class="font-bold text-lg">{{ modalType === 'encountered' ? '🧠 已接触' : '🏆 熟词本' }}</span>
+                    <button @click="modalType = null" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+                </div>
+                <ul class="flex-1 overflow-y-auto p-4 space-y-1">
+                    <li v-for="w in modalWords" :key="w" @click="closeModalAndSelect(w)" class="px-4 py-3 rounded-xl hover:bg-indigo-50 cursor-pointer font-medium text-gray-700 capitalize">
+                        {{ w }}
+                    </li>
+                    <li v-if="modalWords.length === 0" class="text-gray-400 text-center py-8">暂无</li>
+                </ul>
+            </div>
+        </div>
 
         <main>
             <div class="relative mb-6 z-20" v-show="!examState.isExam">
@@ -264,6 +338,18 @@ HTML_CONTENT = """
                     return Object.values(stats.value).filter(s => s.nextReview > 0).length;
                 });
 
+                const encounteredWords = computed(() => Object.keys(stats.value).sort());
+                const masteredWords = computed(() => Object.keys(stats.value).filter(w => stats.value[w]?.nextReview > 0).sort());
+                const modalType = ref(null);
+                const modalWords = computed(() => modalType.value === 'encountered' ? encounteredWords.value : masteredWords.value);
+                const leaderboard = ref([]);
+
+                const openModal = (t) => { modalType.value = t; };
+                const closeModalAndSelect = async (word) => {
+                    modalType.value = null;
+                    await selectWord(word);
+                };
+
                 const getWordStat = (word) => {
                     if (!stats.value[word]) stats.value[word] = { count: 0, nextReview: 0 };
                     return stats.value[word];
@@ -287,11 +373,25 @@ HTML_CONTENT = """
                     if (val?.word && !examState.value.isExam) nextTick(() => speakWord(val.word));
                 });
 
-                // 初始化时拉取全部 key
+                // 初始化时拉取全部 key、排行榜，并提交本次访问的已接触数
                 onMounted(async () => {
                     try {
-                        const res = await fetch('/api/keys');
-                        allKeys.value = await res.json();
+                        const [keysRes, lbRes] = await Promise.all([
+                            fetch('/api/keys'),
+                            fetch('/api/leaderboard')
+                        ]);
+                        allKeys.value = await keysRes.json();
+                        leaderboard.value = await lbRes.json();
+                        const count = Object.keys(stats.value).length;
+                        if (count > 0) {
+                            const sub = await fetch('/api/leaderboard', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ count })
+                            });
+                            const data = await sub.json();
+                            if (data.top5) leaderboard.value = data.top5;
+                        }
                     } catch(e) {}
                 });
 
@@ -462,6 +562,7 @@ HTML_CONTENT = """
 
                 return { 
                     searchQuery, searchResults, currentWord, isLoading, stats, masteredCount,
+                    encounteredWords, modalType, modalWords, leaderboard, openModal, closeModalAndSelect,
                     examState, examInput, examError, examInputRef, examTitle,
                     handleSearch, selectWord, fetchRandom, submitExam, giveUp, renderMarkdown, formatKey, speakWord 
                 };

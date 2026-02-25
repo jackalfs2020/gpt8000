@@ -1,4 +1,5 @@
 gptwords.json
+leaderboard.json
 __pycache__/
 *.pyc
 .venv/
