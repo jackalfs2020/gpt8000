@@ -1,6 +1,8 @@
 import json
 import os
 import random
+import urllib.request
+import urllib.parse
 from datetime import datetime, timezone
 import re
 import edge_tts
@@ -86,11 +88,45 @@ def api_search(q: str = ""):
             if len(res) >= 12: break
     return res
 
+def _fetch_phonetic(w: str) -> str:
+    """从 Free Dictionary API 获取 IPA 音标"""
+    try:
+        req = urllib.request.Request(
+            f"https://api.dictionaryapi.dev/api/v2/entries/en/{urllib.parse.quote(w)}",
+            headers={"User-Agent": "GPT8000/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=3) as r:
+            data = json.loads(r.read().decode())
+        for entry in data if isinstance(data, list) else []:
+            for p in entry.get("phonetics", []) or []:
+                if p.get("text"):
+                    return p["text"]
+        return ""
+    except Exception:
+        return ""
+
+
+def _extract_phonetic_from_data(data: dict) -> str:
+    """从词条数据中提取音标"""
+    for key in ("phonetic", "phonetics", "音标", "pronunciation", "usPhonetic", "ukPhonetic"):
+        v = data.get(key)
+        if v:
+            return v if isinstance(v, str) else str(v)
+    return ""
+
+
 @app.get("/api/word/{word}")
 def api_word(word: str):
     word = word.lower()
-    if word in words_data: return {"word": word, "data": words_data[word]}
-    return {"word": word, "data": {}}
+    data = words_data.get(word, {}) if word in words_data else {}
+    data = dict(data) if isinstance(data, dict) else {}
+    # 音标：优先用数据内字段，否则请求 Free Dictionary API
+    phonetic = _extract_phonetic_from_data(data)
+    if not phonetic:
+        phonetic = _fetch_phonetic(word)
+    if phonetic and "phonetic" not in data:
+        data["phonetic"] = phonetic
+    return {"word": word, "data": data}
 
 @app.get("/api/random")
 def api_random():
@@ -242,7 +278,7 @@ HTML_CONTENT = """
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         [v-cloak] { display: none; }
-        .markdown-body p { margin-bottom: 0.5rem; line-height: 1.6; }
+        .markdown-body p { margin-bottom: 0.15rem; line-height: 1.5; }
         .markdown-body strong { color: #4f46e5; }
         .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
         @keyframes shake {
@@ -294,7 +330,7 @@ HTML_CONTENT = """
                     <button @click="modalType = null" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
                 </div>
                 <ul class="flex-1 overflow-y-auto p-4 space-y-1">
-                    <li v-for="w in modalWords" :key="w" @click="closeModalAndSelect(w)" class="px-4 py-3 rounded-xl hover:bg-indigo-50 cursor-pointer font-medium text-gray-700 capitalize">
+                    <li v-for="w in modalWords" :key="w" @click="closeModalAndSelect(w)" class="px-4 py-3 rounded-xl hover:bg-indigo-50 cursor-pointer font-medium text-gray-700">
                         {{ w }}
                     </li>
                     <li v-if="modalWords.length === 0" class="text-gray-400 text-center py-8">暂无</li>
@@ -352,7 +388,10 @@ HTML_CONTENT = """
 
             <div v-else-if="currentWord && !searchQuery" class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mt-6 relative z-10">
                 <div class="bg-gradient-to-r from-indigo-600 to-blue-500 px-8 py-8 sm:py-10 text-white relative">
-                    <h2 class="text-5xl font-black tracking-wide capitalize relative z-10">{{ currentWord.word }}</h2>
+                    <div class="relative z-10">
+                        <h2 class="text-5xl font-black tracking-wide">{{ currentWord.word }}</h2>
+                        <p v-if="phoneticText" class="text-white/90 text-lg mt-1 font-medium">{{ phoneticText }}</p>
+                    </div>
                     <div class="absolute top-6 right-6 flex flex-col items-end space-y-2 z-10">
                         <span class="bg-white/20 backdrop-blur px-3 py-1 rounded-full text-xs font-bold shadow-sm border border-white/30">
                              🎯 抽中: {{ stats[currentWord.word]?.count || 0 }} 次
@@ -362,22 +401,22 @@ HTML_CONTENT = """
                         </span>
                     </div>
                 </div>
-                <div class="p-8 space-y-6">
+                <div class="p-8 space-y-4">
                     <div v-for="(value, key) in currentWord.data" :key="key">
-                        <template v-if="!['word', 'headword'].includes(key.toLowerCase()) && value">
-                            <div class="flex items-center justify-between gap-3 mb-3">
+                        <template v-if="!['word', 'headword', 'phonetic'].includes(key.toLowerCase()) && value">
+                            <div class="flex items-center justify-between gap-3 mb-2">
                                 <h3 class="text-sm text-indigo-500 font-extrabold uppercase tracking-widest flex items-center">
                                     {{ formatKey(key) }}
                                 </h3>
                                 <button v-if="key.toLowerCase() === 'content'" @click="speakWord(currentWord.word)" type="button" class="flex-shrink-0 px-3 py-1.5 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-700 text-xs font-bold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-300" title="语迟福到">语迟福到</button>
                             </div>
-                            <div v-if="typeof value === 'object'" class="space-y-3 bg-indigo-50/30 p-5 rounded-2xl markdown-body">
+                            <div v-if="typeof value === 'object'" class="space-y-1 bg-indigo-50/30 p-4 rounded-2xl markdown-body">
                                 <p v-for="(v, k) in value" :key="k" class="text-gray-700">
                                     <span v-if="isNaN(k)" class="font-bold text-gray-900 mr-1">{{ k }}: </span>
                                     <span v-html="renderMarkdown(String(v))"></span>
                                 </p>
                             </div>
-                            <div v-else class="text-gray-700 bg-indigo-50/30 p-5 rounded-2xl markdown-body" v-html="renderMarkdown(String(value))"></div>
+                            <div v-else class="text-gray-700 bg-indigo-50/30 p-4 rounded-2xl markdown-body" v-html="renderMarkdown(String(value))"></div>
                         </template>
                     </div>
                 </div>
@@ -417,6 +456,16 @@ HTML_CONTENT = """
 
                 const masteredCount = computed(() => {
                     return Object.values(stats.value).filter(s => s.nextReview > 0).length;
+                });
+
+                const phoneticText = computed(() => {
+                    const d = currentWord.value?.data;
+                    if (!d || typeof d !== 'object') return '';
+                    for (const k of ['phonetic', 'phonetics', '音标', 'pronunciation', 'usPhonetic', 'ukPhonetic']) {
+                        const v = d[k];
+                        if (v && typeof v === 'string') return v;
+                    }
+                    return '';
                 });
 
                 const encounteredWords = computed(() => Object.keys(stats.value).sort());
@@ -655,7 +704,7 @@ HTML_CONTENT = """
                 };
 
                 return { 
-                    searchQuery, searchResults, currentWord, isLoading, stats, masteredCount,
+                    searchQuery, searchResults, currentWord, isLoading, stats, masteredCount, phoneticText,
                     encounteredWords, modalType, modalWords, leaderboard, openModal, closeModalAndSelect,
                     examState, examInput, examError, examInputRef, examTitle,
                     handleSearch, selectWord, fetchRandom, submitExam, giveUp, renderMarkdown, formatKey, speakWord 
