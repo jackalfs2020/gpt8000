@@ -241,28 +241,20 @@ HTML_CONTENT = """
             <div class="mt-4 bg-white rounded-xl shadow border border-gray-100 p-4 max-w-xs mx-auto">
                 <h3 class="text-xs font-black text-gray-500 uppercase tracking-wider mb-3 text-center">📊 排行榜（已接触数）</h3>
                 <div class="space-y-3 text-sm">
-                    <div v-if="leaderboard.total?.length" class="border-b border-gray-100 pb-2">
+                    <div class="border-b border-gray-100 pb-2">
                         <p class="text-gray-400 text-xs mb-1">周期：全部</p>
-                        <div v-for="(n, i) in leaderboard.total" :key="'t'+i" class="flex justify-between py-0.5">
-                            <span class="text-gray-500">{{ i + 1 }}</span>
-                            <span class="font-bold text-indigo-600">{{ n }} 词</span>
-                        </div>
+                        <div class="flex justify-between py-0.5"><span class="text-gray-500">1</span><span class="font-bold" :class="leaderboard.total?.[0] ? 'text-indigo-600' : 'text-gray-300'">{{ leaderboard.total?.[0] ? leaderboard.total[0] + ' 词' : '—' }}</span></div>
+                        <div class="flex justify-between py-0.5"><span class="text-gray-500">2</span><span class="font-bold" :class="leaderboard.total?.[1] ? 'text-indigo-600' : 'text-gray-300'">{{ leaderboard.total?.[1] ? leaderboard.total[1] + ' 词' : '—' }}</span></div>
                     </div>
-                    <div v-if="leaderboard.monthly?.length" class="border-b border-gray-100 pb-2">
+                    <div class="border-b border-gray-100 pb-2">
                         <p class="text-gray-400 text-xs mb-1">周期：本月</p>
-                        <div v-for="(n, i) in leaderboard.monthly" :key="'m'+i" class="flex justify-between py-0.5">
-                            <span class="text-gray-500">{{ i + 1 }}</span>
-                            <span class="font-bold text-indigo-600">{{ n }} 词</span>
-                        </div>
+                        <div class="flex justify-between py-0.5"><span class="text-gray-500">1</span><span class="font-bold" :class="leaderboard.monthly?.[0] ? 'text-indigo-600' : 'text-gray-300'">{{ leaderboard.monthly?.[0] ? leaderboard.monthly[0] + ' 词' : '—' }}</span></div>
                     </div>
-                    <div v-if="leaderboard.daily?.length">
+                    <div>
                         <p class="text-gray-400 text-xs mb-1">周期：今日</p>
-                        <div v-for="(n, i) in leaderboard.daily" :key="'d'+i" class="flex justify-between py-0.5">
-                            <span class="text-gray-500">{{ i + 1 }}</span>
-                            <span class="font-bold text-indigo-600">{{ n }} 词</span>
-                        </div>
+                        <div class="flex justify-between py-0.5"><span class="text-gray-500">1</span><span class="font-bold" :class="leaderboard.daily?.[0] ? 'text-indigo-600' : 'text-gray-300'">{{ leaderboard.daily?.[0] ? leaderboard.daily[0] + ' 词' : '—' }}</span></div>
+                        <div class="flex justify-between py-0.5"><span class="text-gray-500">2</span><span class="font-bold" :class="leaderboard.daily?.[1] ? 'text-indigo-600' : 'text-gray-300'">{{ leaderboard.daily?.[1] ? leaderboard.daily[1] + ' 词' : '—' }}</span></div>
                     </div>
-                    <p v-if="!leaderboard.total?.length && !leaderboard.monthly?.length && !leaderboard.daily?.length" class="text-gray-400 text-center py-2">暂无记录</p>
                 </div>
             </div>
         </header>
@@ -434,31 +426,39 @@ HTML_CONTENT = """
                     if (val?.word && !examState.value.isExam) nextTick(() => speakWord(val.word));
                 });
 
-                // 初始化时拉取全部 key、排行榜，并提交本次访问的已接触数
+                // 初始化：仅拉取 keys（阻塞），排行榜延后加载不阻塞主流程
                 onMounted(async () => {
                     try {
-                        const [keysRes, lbRes] = await Promise.all([
-                            fetch('/api/keys'),
-                            fetch('/api/leaderboard')
-                        ]);
+                        const keysRes = await fetch('/api/keys');
                         allKeys.value = await keysRes.json();
-                        leaderboard.value = await lbRes.json();
-                        const count = Object.keys(stats.value).length;
-                        if (count > 0) {
-                            let deviceId = localStorage.getItem('gpt_dict_device_id');
-                            if (!deviceId) {
-                                deviceId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'd-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-                                localStorage.setItem('gpt_dict_device_id', deviceId);
-                            }
-                            const sub = await fetch('/api/leaderboard', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ count, device_id: deviceId })
-                            });
-                            const data = await sub.json();
-                            if (data.total) leaderboard.value = { total: data.total || [], monthly: data.monthly || [], daily: data.daily || [] };
-                        }
                     } catch(e) {}
+                    // 延后加载排行榜，不阻塞首屏
+                    const loadLeaderboard = async () => {
+                        try {
+                            const lbRes = await fetch('/api/leaderboard');
+                            leaderboard.value = await lbRes.json();
+                            const count = Object.keys(stats.value).length;
+                            if (count > 0) {
+                                let deviceId = localStorage.getItem('gpt_dict_device_id');
+                                if (!deviceId) {
+                                    deviceId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'd-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+                                    localStorage.setItem('gpt_dict_device_id', deviceId);
+                                }
+                                const sub = await fetch('/api/leaderboard', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ count, device_id: deviceId })
+                                });
+                                const data = await sub.json();
+                                if (data.total) leaderboard.value = { total: data.total || [], monthly: data.monthly || [], daily: data.daily || [] };
+                            }
+                        } catch(e) {}
+                    };
+                    if (typeof requestIdleCallback !== 'undefined') {
+                        requestIdleCallback(() => loadLeaderboard(), { timeout: 2000 });
+                    } else {
+                        setTimeout(loadLeaderboard, 100);
+                    }
                 });
 
                 const handleSearch = () => {
