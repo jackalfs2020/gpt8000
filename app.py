@@ -99,8 +99,13 @@ def api_random():
     return {"word": w, "data": words_data[w]}
 
 
-# 排行榜：持久化到文件，后台记录 device_id + ip + user_agent 辅助（不返回前端）
-# 存储格式: [{count, ts, device_id?, ip?, user_agent?}, ...]
+# 排行榜：持久化到文件，用日期字符串 day/month 做周期筛选（不依赖时间戳）
+# 存储格式: [{count, day?, month?, device_id?, ip?, user_agent?}, ...]
+def _today_str() -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
+
+
 def _load_leaderboard() -> list[dict]:
     try:
         with open(LEADERBOARD_FILE, "r", encoding="utf-8") as f:
@@ -110,14 +115,24 @@ def _load_leaderboard() -> list[dict]:
             out = []
             for x in data:
                 if isinstance(x, dict) and "count" in x:
+                    day = x.get("day") or ""
+                    month = x.get("month") or ""
+                    if not day and x.get("ts"):
+                        try:
+                            dt = datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc)
+                            day, month = dt.strftime("%Y-%m-%d"), dt.strftime("%Y-%m")
+                        except Exception:
+                            pass
                     out.append({
                         **x,
+                        "day": day,
+                        "month": month,
                         "device_id": x.get("device_id") or "",
                         "ip": x.get("ip") or "",
                         "user_agent": x.get("user_agent") or "",
                     })
                 elif isinstance(x, (int, float)):
-                    out.append({"count": int(x), "ts": 0, "device_id": "", "ip": "", "user_agent": ""})
+                    out.append({"count": int(x), "day": "", "month": "", "device_id": "", "ip": "", "user_agent": ""})
             return out
     except (FileNotFoundError, json.JSONDecodeError):
         return []
@@ -131,22 +146,33 @@ def _save_leaderboard(lst: list[dict]) -> None:
         print(f"⚠️ 排行榜保存失败: {e}")
 
 
+def _device_key(x: dict) -> str:
+    """设备主键：device_id 优先，否则 ip|user_agent"""
+    did = (x.get("device_id") or "").strip()
+    if did:
+        return f"d:{did}"
+    return f"i:{x.get('ip','')}|{x.get('user_agent','')}"
+
+
+def _dedupe_by_device(records: list[dict]) -> list[int]:
+    """按设备去重，每设备只保留该周期内最高分，再取排名"""
+    by_key: dict[str, int] = {}
+    for x in records:
+        k = _device_key(x)
+        c = x.get("count", 0)
+        by_key[k] = max(by_key.get(k, 0), c)
+    return sorted(by_key.values(), reverse=True)
+
+
 def _build_leaderboard_response(lst: list[dict]) -> dict:
-    now = datetime.now(timezone.utc)
-    cur_year, cur_month, cur_day = now.year, now.month, now.day
-    counts_all = sorted([x["count"] for x in lst], reverse=True)
-    counts_month = sorted(
-        [x["count"] for x in lst if x.get("ts") and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).year == cur_year and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).month == cur_month],
-        reverse=True
-    )
-    counts_day = sorted(
-        [x["count"] for x in lst if x.get("ts") and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).year == cur_year and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).month == cur_month and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).day == cur_day],
-        reverse=True
-    )
+    cur_day, cur_month = _today_str()
+    total_counts = _dedupe_by_device(lst)
+    monthly_records = [x for x in lst if x.get("month") == cur_month]
+    daily_records = [x for x in lst if x.get("day") == cur_day]
     return {
-        "total": counts_all[:2],   # 第1、2名
-        "monthly": counts_month[:1],  # 月度第1名
-        "daily": counts_day[:2],   # 单日第1、2名
+        "total": total_counts[:2],       # 第1、2名，每设备仅占一名
+        "monthly": _dedupe_by_device(monthly_records)[:1],
+        "daily": _dedupe_by_device(daily_records)[:2],
     }
 
 
@@ -165,9 +191,11 @@ def api_leaderboard_submit(body: LeaderboardIn, request: Request):
         did = (body.device_id or "").strip()[:64] if body.device_id else ""
         ip = request.headers.get("x-forwarded-for", request.client.host or "").split(",")[0].strip()[:45] if request.client else ""
         ua = (request.headers.get("user-agent") or "")[:200]
+        day_str, month_str = _today_str()
         _leaderboard.append({
             "count": body.count,
-            "ts": int(datetime.now(timezone.utc).timestamp() * 1000),
+            "day": day_str,
+            "month": month_str,
             "device_id": did,
             "ip": ip,
             "user_agent": ua,
