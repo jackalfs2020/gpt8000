@@ -1,6 +1,7 @@
 import json
 import os
 import random
+from datetime import datetime, timezone
 import re
 import edge_tts
 from fastapi import FastAPI
@@ -98,16 +99,25 @@ def api_random():
 
 
 # 排行榜：仅存已接触数量，不记录人或设备，持久化到文件
-def _load_leaderboard() -> list[int]:
+# 存储格式: [{count, ts}, ...]  ts 为 Unix 毫秒
+def _load_leaderboard() -> list[dict]:
     try:
         with open(LEADERBOARD_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data if isinstance(data, list) else []
+            if not isinstance(data, list):
+                return []
+            out = []
+            for x in data:
+                if isinstance(x, dict) and "count" in x:
+                    out.append(x)
+                elif isinstance(x, (int, float)):
+                    out.append({"count": int(x), "ts": 0})
+            return out
     except (FileNotFoundError, json.JSONDecodeError):
         return []
 
 
-def _save_leaderboard(lst: list[int]) -> None:
+def _save_leaderboard(lst: list[dict]) -> None:
     try:
         with open(LEADERBOARD_FILE, "w", encoding="utf-8") as f:
             json.dump(lst, f, ensure_ascii=False)
@@ -115,23 +125,42 @@ def _save_leaderboard(lst: list[int]) -> None:
         print(f"⚠️ 排行榜保存失败: {e}")
 
 
+def _build_leaderboard_response(lst: list[dict]) -> dict:
+    now = datetime.now(timezone.utc)
+    cur_year, cur_month, cur_day = now.year, now.month, now.day
+    counts_all = sorted([x["count"] for x in lst], reverse=True)
+    counts_month = sorted(
+        [x["count"] for x in lst if x.get("ts") and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).year == cur_year and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).month == cur_month],
+        reverse=True
+    )
+    counts_day = sorted(
+        [x["count"] for x in lst if x.get("ts") and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).year == cur_year and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).month == cur_month and datetime.fromtimestamp(x["ts"] / 1000, tz=timezone.utc).day == cur_day],
+        reverse=True
+    )
+    return {
+        "total": counts_all[:2],
+        "monthly": counts_month[:1],
+        "daily": counts_day[:2],
+    }
+
+
 _leaderboard = _load_leaderboard()
 
 
 @app.get("/api/leaderboard")
 def api_leaderboard():
-    return sorted(_leaderboard, reverse=True)[:5]
+    return _build_leaderboard_response(_leaderboard)
 
 
 @app.post("/api/leaderboard")
 def api_leaderboard_submit(body: LeaderboardIn):
     """仅提交已接触数量，不记录任何身份信息"""
     if 0 <= body.count <= 100000:
-        _leaderboard.append(body.count)
-        _leaderboard.sort(reverse=True)
+        _leaderboard.append({"count": body.count, "ts": int(datetime.now(timezone.utc).timestamp() * 1000)})
+        _leaderboard.sort(key=lambda x: x["count"], reverse=True)
         del _leaderboard[100:]
         _save_leaderboard(_leaderboard)
-    return {"ok": True, "top5": sorted(_leaderboard, reverse=True)[:5]}
+    return {"ok": True, **_build_leaderboard_response(_leaderboard)}
 
 
 @app.get("/api/audio/{word}")
@@ -195,14 +224,31 @@ HTML_CONTENT = """
                 </button>
             </div>
             <div class="mt-4 bg-white rounded-xl shadow border border-gray-100 p-4 max-w-xs mx-auto">
-                <h3 class="text-xs font-black text-gray-500 uppercase tracking-wider mb-2 text-center">📊 排行榜（已接触数）</h3>
-                <ul class="space-y-1 text-sm">
-                    <li v-for="(n, i) in leaderboard" :key="i" class="flex justify-between py-1 border-b border-gray-50 last:border-0">
-                        <span class="text-gray-400">#{{ i + 1 }}</span>
-                        <span class="font-bold text-indigo-600">{{ n }} 词</span>
-                    </li>
-                    <li v-if="leaderboard.length === 0" class="text-gray-400 text-center py-2">暂无记录</li>
-                </ul>
+                <h3 class="text-xs font-black text-gray-500 uppercase tracking-wider mb-3 text-center">📊 排行榜（已接触数）</h3>
+                <div class="space-y-3 text-sm">
+                    <div v-if="leaderboard.total?.length" class="border-b border-gray-100 pb-2">
+                        <p class="text-gray-400 text-xs mb-1">周期：全部</p>
+                        <div v-for="(n, i) in leaderboard.total" :key="'t'+i" class="flex justify-between py-0.5">
+                            <span class="text-gray-500">{{ i + 1 }}</span>
+                            <span class="font-bold text-indigo-600">{{ n }} 词</span>
+                        </div>
+                    </div>
+                    <div v-if="leaderboard.monthly?.length" class="border-b border-gray-100 pb-2">
+                        <p class="text-gray-400 text-xs mb-1">周期：本月</p>
+                        <div v-for="(n, i) in leaderboard.monthly" :key="'m'+i" class="flex justify-between py-0.5">
+                            <span class="text-gray-500">{{ i + 1 }}</span>
+                            <span class="font-bold text-indigo-600">{{ n }} 词</span>
+                        </div>
+                    </div>
+                    <div v-if="leaderboard.daily?.length">
+                        <p class="text-gray-400 text-xs mb-1">周期：今日</p>
+                        <div v-for="(n, i) in leaderboard.daily" :key="'d'+i" class="flex justify-between py-0.5">
+                            <span class="text-gray-500">{{ i + 1 }}</span>
+                            <span class="font-bold text-indigo-600">{{ n }} 词</span>
+                        </div>
+                    </div>
+                    <p v-if="!leaderboard.total?.length && !leaderboard.monthly?.length && !leaderboard.daily?.length" class="text-gray-400 text-center py-2">暂无记录</p>
+                </div>
             </div>
         </header>
 
@@ -342,7 +388,7 @@ HTML_CONTENT = """
                 const masteredWords = computed(() => Object.keys(stats.value).filter(w => stats.value[w]?.nextReview > 0).sort());
                 const modalType = ref(null);
                 const modalWords = computed(() => modalType.value === 'encountered' ? encounteredWords.value : masteredWords.value);
-                const leaderboard = ref([]);
+                const leaderboard = ref({ total: [], monthly: [], daily: [] });
 
                 const openModal = (t) => { modalType.value = t; };
                 const closeModalAndSelect = async (word) => {
@@ -390,7 +436,7 @@ HTML_CONTENT = """
                                 body: JSON.stringify({ count })
                             });
                             const data = await sub.json();
-                            if (data.top5) leaderboard.value = data.top5;
+                            if (data.total) leaderboard.value = { total: data.total || [], monthly: data.monthly || [], daily: data.daily || [] };
                         }
                     } catch(e) {}
                 });
