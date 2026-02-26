@@ -16,11 +16,12 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# 路径配置
+# 路径配置（Zeabur 等平台可设置 DATA_DIR=/data 使用持久化目录）
 BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR)))
 STATIC_DIR = BASE_DIR / "static"
-AUDIO_CACHE_DIR = BASE_DIR / "audio_cache"
-DB_PATH = os.environ.get("DATA_DB", str(BASE_DIR / "data.db"))
+AUDIO_CACHE_DIR = DATA_DIR / "audio_cache"
+DB_PATH = os.environ.get("DATA_DB", str(DATA_DIR / "data.db"))
 
 # 排行榜防刷：同 IP 或 device_id 10 分钟内仅可提交 1 次
 RATE_LIMIT_SECONDS = 600
@@ -44,10 +45,18 @@ words_data = {}
 words_keys = []
 
 
+def _gptwords_path() -> Path:
+    p = os.environ.get("GPTWORDS_PATH")
+    if p:
+        return Path(p)
+    return BASE_DIR / "gptwords.json"
+
+
 def load_data():
     global words_data, words_keys
+    path = _gptwords_path()
     try:
-        with open(BASE_DIR / "gptwords.json", "r", encoding="utf-8-sig") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             content = f.read().strip()
             if not content:
                 raise ValueError("文件内容为空")
@@ -102,6 +111,7 @@ load_data()
 
 
 def _init_db():
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS rank (
