@@ -343,15 +343,11 @@ HTML_CONTENT = """
                 <input v-model="searchQuery" @input="handleSearch" type="text" 
                        class="w-full px-5 py-4 rounded-2xl border border-gray-200 shadow-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 focus:outline-none text-lg transition-all"
                        placeholder="查词 (搜索不计入抽卡次数)..." autocomplete="off">
-                <div v-if="navList.length > 0 && currentWord" class="absolute right-3 top-3 flex gap-2">
-                    <button @click="navPrev" :disabled="navIndex <= 0" class="px-3 py-2 rounded-xl text-sm font-bold bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">上一个词</button>
-                    <button @click="navNext" :disabled="navIndex >= navList.length - 1" class="px-3 py-2 rounded-xl text-sm font-bold bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">下一个词</button>
-                </div>
             </div>
 
             <div v-if="searchResults.length > 0 && searchQuery && !examState.isExam" class="bg-white rounded-2xl shadow-xl border border-gray-100 mb-6 overflow-hidden absolute w-[calc(100%-2rem)] sm:w-[calc(100%-3rem)] lg:w-[calc(100%-4rem)] max-w-3xl z-30">
                 <ul class="divide-y divide-gray-50 max-h-80 overflow-y-auto">
-                    <li v-for="(item, idx) in searchResults" :key="item.word" @click="selectWord(item.word, idx)" 
+                    <li v-for="item in searchResults" :key="item.word" @click="selectWord(item.word)" 
                         class="px-6 py-4 hover:bg-indigo-50 cursor-pointer transition-colors flex justify-between items-center group">
                         <span class="font-bold text-gray-700 group-hover:text-indigo-600 text-lg">{{ item.word }}</span>
                         <span class="text-gray-400 text-sm">查看解析 ➔</span>
@@ -481,8 +477,6 @@ HTML_CONTENT = """
                 const modalType = ref(null);
                 const modalWords = computed(() => modalType.value === 'encountered' ? encounteredWords.value : masteredWords.value);
                 const leaderboard = ref({ total: [], monthly: [], daily: [] });
-                const navList = ref([]);
-                const navIndex = ref(-1);
 
                 const openModal = (t) => { modalType.value = t; };
                 const closeModalAndSelect = async (word) => {
@@ -583,41 +577,27 @@ HTML_CONTENT = """
                 });
 
                 const handleSearch = () => {
-                    if (!searchQuery.value) { searchResults.value = []; navList.value = []; navIndex.value = -1; return; }
+                    if (!searchQuery.value) { searchResults.value = []; return; }
                     clearTimeout(timeoutId);
                     timeoutId = setTimeout(async () => {
                         try {
                             const res = await fetch(`/api/search?q=${searchQuery.value}`);
-                            const list = await res.json();
-                            searchResults.value = list;
-                            navList.value = list;
+                            searchResults.value = await res.json();
                         } catch(e) {}
                     }, 150);
                 };
 
                 // 搜索点词（只展示，不计入盲盒次数）
-                const selectWord = async (word, index) => {
+                const selectWord = async (word) => {
                     if (examState.value.isExam) { alert("请先完成答卷！"); return; }
                     isLoading.value = true;
                     searchQuery.value = '';
                     searchResults.value = [];
-                    if (index != null) navIndex.value = index;
                     try {
                         const res = await fetch(`/api/word/${word}`);
                         currentWord.value = await res.json();
                     } catch(e) {}
                     isLoading.value = false;
-                };
-
-                const navPrev = () => {
-                    if (navIndex.value <= 0) return;
-                    navIndex.value--;
-                    selectWord(navList.value[navIndex.value].word, navIndex.value);
-                };
-                const navNext = () => {
-                    if (navIndex.value >= navList.value.length - 1) return;
-                    navIndex.value++;
-                    selectWord(navList.value[navIndex.value].word, navIndex.value);
                 };
 
                 // 自动提取中文释义并「打码原词」防作弊
@@ -644,8 +624,6 @@ HTML_CONTENT = """
                     isLoading.value = true;
                     searchQuery.value = '';
                     searchResults.value = [];
-                    navList.value = [];
-                    navIndex.value = -1;
 
                     const now = Date.now();
                     
@@ -765,7 +743,6 @@ HTML_CONTENT = """
 
                 return { 
                     searchQuery, searchResults, currentWord, isLoading, stats, masteredCount, phoneticText,
-                    navList, navIndex, navPrev, navNext,
                     encounteredWords, modalType, modalWords, leaderboard, openModal, closeModalAndSelect,
                     examState, examInput, examError, examInputRef, examTitle,
                     handleSearch, selectWord, fetchRandom, submitExam, giveUp, renderMarkdown, formatKey, speakWord 
