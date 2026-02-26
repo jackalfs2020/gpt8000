@@ -434,6 +434,13 @@ HTML_CONTENT = """
             
             <div v-if="searchResults.length > 0 && searchQuery" @click="searchQuery = ''" class="fixed inset-0 z-10"></div>
         </main>
+
+        <div v-if="!examState.isExam" class="fixed bottom-0 left-0 right-0 z-40 p-4 pb-6 bg-gradient-to-t from-gray-50 to-transparent">
+            <button @click="fetchRandom" class="w-full max-w-sm mx-auto flex items-center justify-center gap-2 py-4 px-6 rounded-2xl bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-lg shadow-lg shadow-indigo-200 active:scale-[0.98] transition-all">
+                🎲 盲盒抽词
+            </button>
+            <p class="text-center text-xs text-gray-400 mt-2">摇一摇手机也可抽词</p>
+        </div>
     </div>
 
     <script>
@@ -531,11 +538,44 @@ HTML_CONTENT = """
                             }
                         } catch(e) {}
                     };
-                    if (typeof requestIdleCallback !== 'undefined') {
-                        requestIdleCallback(() => loadLeaderboard(), { timeout: 2000 });
-                    } else {
-                        setTimeout(loadLeaderboard, 100);
-                    }
+                    const runWhenIdle = (fn) => {
+                        if (typeof requestIdleCallback !== 'undefined') {
+                            requestIdleCallback(fn, { timeout: 3000 });
+                        } else {
+                            setTimeout(fn, 300);
+                        }
+                    };
+                    runWhenIdle(loadLeaderboard);
+                    // 摇一摇抽词：延后初始化，不阻塞主流程
+                    runWhenIdle(() => {
+                        if (typeof DeviceMotionEvent === 'undefined') return;
+                        let lastShake = 0, lastCheck = 0;
+                        const SHAKE_THRESHOLD = 15;
+                        const SHAKE_COOLDOWN = 1500;
+                        const CHECK_INTERVAL = 150;
+                        const handleMotion = (e) => {
+                            const now = Date.now();
+                            if (now - lastCheck < CHECK_INTERVAL) return;
+                            lastCheck = now;
+                            const a = e.accelerationIncludingGravity || e.acceleration;
+                            if (!a) return;
+                            const mag = Math.sqrt((a.x||0)**2 + (a.y||0)**2 + (a.z||0)**2);
+                            if (mag > SHAKE_THRESHOLD && now - lastShake >= SHAKE_COOLDOWN) {
+                                lastShake = now;
+                                fetchRandom();
+                            }
+                        };
+                        if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                            document.addEventListener('click', function req() {
+                                DeviceMotionEvent.requestPermission().then(() => {
+                                    window.addEventListener('devicemotion', handleMotion, { passive: true });
+                                    document.removeEventListener('click', req);
+                                }).catch(() => {});
+                            }, { once: true });
+                        } else {
+                            window.addEventListener('devicemotion', handleMotion, { passive: true });
+                        }
+                    });
                 });
 
                 const handleSearch = () => {
